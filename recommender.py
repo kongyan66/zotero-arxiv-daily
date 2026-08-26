@@ -47,14 +47,46 @@ _PHRASE_KEYWORDS = [
 ]
 
 _THEME_RULES = [
-    ("Document AI / PDF Parsing / OCR", {"document parsing", "OCR", "scene text recognition", "pdf", "docling", "document"}),
-    ("Vision-Language Models / Multimodal OCR", {"vision-language models", "multimodal", "OCR", "qwen", "vlm", "visual"}),
-    ("Long-tail Recognition / Noisy Labels", {"long-tail learning", "noisy labels", "label", "rarity", "calibration"}),
-    ("Gaze Estimation / Visual Perception", {"gaze estimation", "gaze", "visual", "estimation"}),
-    ("Depth Estimation / 3D Vision", {"depth estimation", "depth", "3d", "visual"}),
-    ("Video Understanding / Multimodal Pre-training", {"video understanding", "video", "multimodal", "pre-training"}),
-    ("LLM / Retrieval-Augmented Workflows", {"LLM", "retrieval-augmented generation", "retrieval", "workflow"}),
-    ("Financial AI / Research Workflows", {"financial research", "financial", "finance", "workflow"}),
+    (
+        "Document AI / PDF Parsing / OCR",
+        {"document parsing", "pdf", "docling", "scene text recognition"},
+        {"ocr", "document", "parsing"},
+    ),
+    (
+        "Vision-Language Models / Multimodal OCR",
+        {"vision-language models", "multimodal", "vlm", "qwen"},
+        {"ocr", "visual recognition", "visual", "reasoning"},
+    ),
+    (
+        "Long-tail Recognition / Noisy Labels",
+        {"long-tail learning", "noisy labels", "long-tail", "noisy"},
+        {"label", "rarity", "calibration", "recognition"},
+    ),
+    (
+        "Gaze Estimation / Visual Perception",
+        {"gaze estimation", "gaze"},
+        {"visual", "estimation", "perception"},
+    ),
+    (
+        "Depth Estimation / 3D Vision",
+        {"depth estimation", "depth"},
+        {"3d", "visual", "estimation"},
+    ),
+    (
+        "Video Understanding / Multimodal Pre-training",
+        {"video understanding", "video"},
+        {"multimodal", "pre-training", "pretraining"},
+    ),
+    (
+        "LLM / Retrieval-Augmented Workflows",
+        {"llm", "retrieval-augmented generation", "rag", "retrieval"},
+        {"workflow", "workflows", "language"},
+    ),
+    (
+        "Financial AI / Research Workflows",
+        {"financial research", "financial", "finance"},
+        {"workflow", "workflows", "research"},
+    ),
 ]
 
 
@@ -118,25 +150,66 @@ def _as_numpy(matrix) -> np.ndarray:
     return np.asarray(matrix)
 
 
-def _extract_keywords(texts:list[str]) -> list[str]:
+def _document_tokens(text:str) -> list[str]:
+    return [
+        token.lower()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", text)
+        if token.lower() not in _STOPWORDS
+    ]
+
+
+def _phrase_document_counts(texts:list[str]) -> dict[str, int]:
+    counts = {}
+    for _, label in _PHRASE_KEYWORDS:
+        counts[label] = 0
+    for text in texts:
+        lower_text = text.lower()
+        for pattern, label in _PHRASE_KEYWORDS:
+            if re.search(pattern, lower_text):
+                counts[label] += 1
+    return counts
+
+
+def _token_document_counts(texts:list[str]) -> Counter:
+    counts = Counter()
+    for text in texts:
+        counts.update(set(_document_tokens(text)))
+    return counts
+
+
+def _extract_keywords(texts:list[str], background_texts:Optional[list[str]]=None) -> list[str]:
+    background_texts = background_texts or texts
+    background_size = max(len(background_texts), 1)
+
     joined = "\n".join(texts).lower()
-    phrase_keywords = []
+    profile_phrase_df = _phrase_document_counts(texts)
+    background_phrase_df = _phrase_document_counts(background_texts)
+    phrase_scores = []
     for pattern, label in _PHRASE_KEYWORDS:
-        if re.search(pattern, joined) and label not in phrase_keywords:
-            phrase_keywords.append(label)
+        if not re.search(pattern, joined):
+            continue
+        profile_hits = profile_phrase_df[label]
+        profile_coverage = profile_hits / max(len(texts), 1)
+        if profile_coverage < 0.06:
+            continue
+        idf = np.log((background_size + 1) / (background_phrase_df[label] + 1)) + 1
+        phrase_scores.append((label, profile_coverage * float(idf)))
+    phrase_keywords = [label for label, _ in sorted(phrase_scores, key=lambda item: item[1], reverse=True)[:4]]
 
     tokens = []
     for text in texts:
-        tokens.extend(
-            token.lower()
-            for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", text)
-            if token.lower() not in _STOPWORDS
-        )
+        tokens.extend(_document_tokens(text))
+    background_df = _token_document_counts(background_texts)
+    token_counts = Counter(tokens)
     token_keywords = []
     phrase_parts = set()
     for phrase in phrase_keywords:
         phrase_parts.update(re.findall(r"[a-z0-9]+", phrase.lower()))
-    for token, _ in Counter(tokens).most_common(12):
+    token_scores = []
+    for token, count in token_counts.items():
+        idf = np.log((background_size + 1) / (background_df[token] + 1)) + 1
+        token_scores.append((token, count * float(idf)))
+    for token, _ in sorted(token_scores, key=lambda item: item[1], reverse=True):
         normalized = token.replace("-", "")
         token_parts = re.findall(r"[a-z0-9]+", token)
         if token in phrase_parts or normalized in phrase_parts or all(part in phrase_parts for part in token_parts):
@@ -148,20 +221,38 @@ def _extract_keywords(texts:list[str]) -> list[str]:
 
 
 def _profile_name(representative_titles:list[str], keywords:list[str]) -> str:
-    evidence = set(keywords)
+    title_blob = " ".join(representative_titles).lower()
+    keyword_blob = " ".join(keywords).lower()
+    if re.search(r"\bqwen\b|\bvlm\b|vision[- ]language|multimodal", title_blob):
+        if re.search(r"ocr|visual|multimodal|vision", keyword_blob + " " + title_blob):
+            return "Vision-Language Models / Multimodal OCR"
+    if re.search(r"docling|pdf parsing|document parsing|scene text", title_blob):
+        return "Document AI / PDF Parsing / OCR"
+    if re.search(r"long[- ]tail|noisy label|label rarity|calibration", title_blob):
+        return "Long-tail Recognition / Noisy Labels"
+    if re.search(r"gaze", title_blob):
+        return "Gaze Estimation / Visual Perception"
+    if re.search(r"depth", title_blob):
+        return "Depth Estimation / 3D Vision"
+
+    evidence = {keyword.lower() for keyword in keywords}
     for keyword in keywords:
         evidence.update(re.findall(r"[a-z0-9]+", keyword.lower()))
     for title in representative_titles:
         evidence.update(re.findall(r"[a-z0-9]+", title.lower()))
 
     best_name = None
-    best_hits = 0
-    for name, terms in _THEME_RULES:
-        hits = len(evidence.intersection({term.lower() for term in terms}))
-        if hits > best_hits:
+    best_score = 0
+    for name, required_terms, support_terms in _THEME_RULES:
+        required_hits = len(evidence.intersection({term.lower() for term in required_terms}))
+        if required_hits == 0:
+            continue
+        support_hits = len(evidence.intersection({term.lower() for term in support_terms}))
+        score = required_hits * 2 + support_hits
+        if score > best_score:
             best_name = name
-            best_hits = hits
-    if best_name and best_hits >= 2:
+            best_score = score
+    if best_name and best_score >= 2:
         return best_name
 
     if keywords:
@@ -174,11 +265,90 @@ def _profile_name(representative_titles:list[str], keywords:list[str]) -> str:
 
 def _profile_confidence(members:list[int], corpus_similarity:np.ndarray) -> float:
     if len(members) <= 1:
-        return 0.55
+        return 0.48
     sub_matrix = corpus_similarity[np.ix_(members, members)]
     upper = sub_matrix[np.triu_indices(len(members), k=1)]
-    mean_similarity = float(np.mean(upper)) if upper.size else 0.55
-    return max(0.35, min(0.98, 0.45 + mean_similarity * 0.55))
+    mean_similarity = float(np.mean(upper)) if upper.size else 0.5
+    size_penalty = min(0.18, max(0, len(members) - 40) * 0.002)
+    return max(0.35, min(0.93, 0.35 + mean_similarity * 0.55 - size_penalty))
+
+
+def _split_members_by_seeds(
+    members:list[int],
+    corpus_similarity:np.ndarray,
+    corpus_weights:np.ndarray,
+    target_count:int,
+) -> list[list[int]]:
+    if target_count <= 1 or len(members) <= 2:
+        return [members]
+
+    seed_indices = [max(members, key=lambda idx: corpus_weights[idx])]
+    while len(seed_indices) < target_count:
+        remaining = [idx for idx in members if idx not in seed_indices]
+        if not remaining:
+            break
+        next_seed = max(
+            remaining,
+            key=lambda idx: (1 - max(float(corpus_similarity[idx, seed]) for seed in seed_indices)) * corpus_weights[idx],
+        )
+        seed_indices.append(next_seed)
+
+    clusters = {seed: [seed] for seed in seed_indices}
+    for member in members:
+        if member in clusters:
+            continue
+        best_seed = max(seed_indices, key=lambda seed: float(corpus_similarity[member, seed]))
+        clusters[best_seed].append(member)
+    return [cluster for cluster in clusters.values() if cluster]
+
+
+def _split_large_profiles(
+    profile_members:list[list[int]],
+    corpus_similarity:np.ndarray,
+    corpus_weights:np.ndarray,
+    max_profiles:int,
+    max_profile_members:int,
+) -> list[list[int]]:
+    if max_profile_members <= 0:
+        return profile_members
+
+    queue = sorted(profile_members, key=len, reverse=True)
+    final_profiles = []
+    while queue:
+        members = queue.pop(0)
+        remaining_slots = max_profiles - len(final_profiles) - len(queue)
+        if len(members) <= max_profile_members or remaining_slots <= 1:
+            final_profiles.append(members)
+            continue
+
+        target_count = min(int(np.ceil(len(members) / max_profile_members)), remaining_slots)
+        split_profiles = _split_members_by_seeds(members, corpus_similarity, corpus_weights, target_count)
+        if len(split_profiles) <= 1:
+            final_profiles.append(members)
+            continue
+        queue.extend(split_profiles)
+        queue.sort(key=len, reverse=True)
+
+    return final_profiles[:max_profiles]
+
+
+def _deduplicate_profile_names(profiles:list[InterestProfile]) -> None:
+    seen = Counter()
+    for profile in profiles:
+        base_name = profile.name
+        seen[base_name] += 1
+        if seen[base_name] == 1:
+            continue
+        name_terms = set(re.findall(r"[a-z0-9]+", base_name.lower()))
+        suffix = next(
+            (
+                keyword
+                for keyword in profile.keywords
+                if not set(re.findall(r"[a-z0-9]+", keyword.lower())).issubset(name_terms)
+            ),
+            profile.representative_titles[0] if profile.representative_titles else f"Variant {seen[base_name]}",
+        )
+        profile.name = f"{base_name} ({suffix})"
 
 
 def _corpus_weights(corpus:list[dict]) -> np.ndarray:
@@ -206,13 +376,15 @@ def _corpus_fingerprint(
     max_profiles:int,
     representative_count:int,
     cluster_threshold:float,
+    max_profile_members:int,
 ) -> str:
     payload = {
-        "profile_version": 2,
+        "profile_version": 3,
         "model": model,
         "max_profiles": max_profiles,
         "representative_count": representative_count,
         "cluster_threshold": cluster_threshold,
+        "max_profile_members": max_profile_members,
         "corpus": [
             {
                 "title": _corpus_title(paper),
@@ -288,6 +460,7 @@ def _build_interest_profiles(
     max_profiles:int,
     representative_count:int,
     cluster_threshold:float,
+    max_profile_members:int,
 ) -> list[InterestProfile]:
     assignment_order = np.argsort(corpus_weights)[::-1]
     profile_members: list[list[int]] = []
@@ -306,6 +479,14 @@ def _build_interest_profiles(
         else:
             profile_members[best_profile_idx].append(int(corpus_idx))
 
+    profile_members = _split_large_profiles(
+        profile_members,
+        corpus_similarity,
+        corpus_weights,
+        max_profiles,
+        max_profile_members,
+    )
+
     corpus_texts = [_corpus_semantic_text(paper) for paper in corpus]
     profile_masses = [float(corpus_weights[members].sum()) for members in profile_members]
     max_mass = max(profile_masses) if profile_masses else 1.0
@@ -314,7 +495,7 @@ def _build_interest_profiles(
         members = sorted(members, key=lambda idx: corpus_weights[idx], reverse=True)
         representative_indices = members[:max(representative_count, 1)]
         representative_titles = [_corpus_title(corpus[idx]) for idx in representative_indices]
-        keywords = _extract_keywords([corpus_texts[idx] for idx in members])
+        keywords = _extract_keywords([corpus_texts[idx] for idx in members], corpus_texts)
         confidence = _profile_confidence(members, corpus_similarity)
         profiles.append(
             InterestProfile(
@@ -330,6 +511,7 @@ def _build_interest_profiles(
             )
         )
     profiles.sort(key=lambda profile: profile.importance, reverse=True)
+    _deduplicate_profile_names(profiles)
     logger.info("Built interest profiles:")
     for idx, profile in enumerate(profiles[:5], start=1):
         logger.info(
@@ -350,6 +532,7 @@ def rerank_paper(candidate:list[ArxivPaper], corpus:list[dict], model:str='avsol
     max_profiles = int(os.environ.get("INTEREST_PROFILE_MAX", "10"))
     representative_count = int(os.environ.get("INTEREST_PROFILE_REPRESENTATIVES", "3"))
     cluster_threshold = float(os.environ.get("INTEREST_PROFILE_CLUSTER_THRESHOLD", "0.72"))
+    max_profile_members = int(os.environ.get("INTEREST_PROFILE_MAX_MEMBERS", "45"))
     top_profiles_per_candidate = int(os.environ.get("INTEREST_PROFILE_TOP_MATCHES", "2"))
     profile_weight = float(os.environ.get("INTEREST_PROFILE_SCORE_WEIGHT", "0.75"))
     representative_weight = float(os.environ.get("INTEREST_REPRESENTATIVE_SCORE_WEIGHT", "0.25"))
@@ -357,11 +540,18 @@ def rerank_paper(candidate:list[ArxivPaper], corpus:list[dict], model:str='avsol
 
     encoder = SentenceTransformer(model)
     corpus = sorted(corpus,key=_corpus_added_date,reverse=True)
-    corpus_texts = [_corpus_text(paper) for paper in corpus]
+    corpus_texts = [_corpus_semantic_text(paper) for paper in corpus]
     candidate_texts = [_candidate_text(paper) for paper in candidate]
     corpus_weights = _corpus_weights(corpus)
 
-    fingerprint = _corpus_fingerprint(corpus, model, max_profiles, representative_count, cluster_threshold)
+    fingerprint = _corpus_fingerprint(
+        corpus,
+        model,
+        max_profiles,
+        representative_count,
+        cluster_threshold,
+        max_profile_members,
+    )
     profiles = _load_cached_profiles(fingerprint)
     if profiles is None:
         logger.info("Building interest profiles from Zotero corpus...")
@@ -374,6 +564,7 @@ def rerank_paper(candidate:list[ArxivPaper], corpus:list[dict], model:str='avsol
             max_profiles,
             representative_count,
             cluster_threshold,
+            max_profile_members,
         )
         _save_cached_profiles(fingerprint, profiles)
 

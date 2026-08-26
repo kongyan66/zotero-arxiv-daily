@@ -117,7 +117,7 @@ def get_profiles_html(profiles:list) -> str:
         confidence_line = ""
         if confidence is not None:
             confidence_line = (
-                f"<br><span style=\"color: #777;\">Confidence: {confidence:.0%}; "
+                f"<br><span style=\"color: #777;\">Profile cohesion: {confidence:.0%}; "
                 f"Zotero papers: {member_count}</span>"
             )
         items.append(
@@ -158,7 +158,7 @@ def get_reason_html(paper:ArxivPaper) -> str:
     confidence_line = ""
     if confidence is not None:
         confidence_line = (
-            f"<br><strong>Profile strength:</strong> {confidence:.0%} confidence"
+            f"<br><strong>Profile cohesion:</strong> {confidence:.0%}"
             f"{f' from {member_count} Zotero papers' if member_count else ''}."
         )
     matched_items = []
