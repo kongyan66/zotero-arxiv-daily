@@ -20,11 +20,18 @@ class ArxivPaper:
         self._paper = paper
         self.score = None
         self.matched_profile = None
+        self.matched_profile_scope = None
         self.matched_profile_confidence = None
         self.matched_profile_member_count = 0
         self.matched_keywords = []
         self.matched_corpus = []
         self.interest_profiles = []
+        self.recent_matched_profile = None
+        self.recent_matched_score = 0.0
+        self.long_term_matched_profile = None
+        self.long_term_matched_score = 0.0
+        self.recent_interest_profiles = []
+        self.long_term_interest_profiles = []
     
     @property
     def title(self) -> str:

@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 import hashlib
 import json
@@ -140,6 +140,17 @@ class InterestProfile:
     representative_titles: list[str]
     member_count: int
     confidence: float
+    scope: str = "long_term"
+
+
+@dataclass
+class PreparedProfileSet:
+    scope: str
+    label: str
+    weight: float
+    corpus: list[dict]
+    corpus_texts: list[str]
+    profiles: list[InterestProfile]
 
 
 def _corpus_title(paper:dict) -> str:
@@ -302,6 +313,49 @@ def _profile_name(representative_titles:list[str], keywords:list[str]) -> str:
     return "General interest"
 
 
+def _dedupe_keywords(keywords:list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for keyword in keywords:
+        normalized = keyword.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(keyword)
+    return deduped
+
+
+def _prioritize_profile_keywords(name:str, keywords:list[str], representative_titles:list[str]) -> list[str]:
+    evidence = " ".join(keywords + representative_titles).lower()
+    priority_keywords = []
+    if "Long-tail Recognition / Noisy Labels" in name:
+        if re.search(r"long[- ]tail|long[- ]tailed", evidence):
+            priority_keywords.append("long-tail learning")
+        if re.search(r"noisy label|label-noise|label noise", evidence):
+            priority_keywords.append("noisy labels")
+        if re.search(r"calibration|refurbishment|rarity", evidence):
+            priority_keywords.append("label calibration")
+        if re.search(r"imbalance|balanced subset|classifying", evidence):
+            priority_keywords.append("class imbalance")
+    elif "Depth Estimation" in name:
+        if "depth" in evidence:
+            priority_keywords.append("depth estimation")
+        if "monocular" in evidence:
+            priority_keywords.append("monocular depth")
+        if "gaze" in evidence:
+            priority_keywords.append("gaze estimation")
+    elif "Scene Text Recognition" in name:
+        priority_keywords.extend([keyword for keyword in ["scene text recognition", "OCR", "STR"] if keyword.lower() in evidence])
+    elif "Document Parsing" in name:
+        priority_keywords.extend([keyword for keyword in ["document parsing", "PDF", "OCR", "layout analysis"] if keyword.lower() in evidence])
+    elif "Vision-Language Models" in name:
+        priority_keywords.extend([keyword for keyword in ["vision-language models", "multimodal", "VLA", "reasoning"] if keyword.lower() in evidence])
+    elif "VLM-based OCR" in name:
+        priority_keywords.extend([keyword for keyword in ["vision-language models", "OCR", "document understanding", "multimodal"] if keyword.lower() in evidence])
+
+    return _dedupe_keywords(priority_keywords + keywords)[:8]
+
+
 def _profile_confidence(members:list[int], corpus_similarity:np.ndarray) -> float:
     if len(members) <= 1:
         return 0.48
@@ -416,9 +470,11 @@ def _corpus_fingerprint(
     representative_count:int,
     cluster_threshold:float,
     max_profile_members:int,
+    scope:str,
 ) -> str:
     payload = {
-        "profile_version": 3,
+        "profile_version": 4,
+        "scope": scope,
         "model": model,
         "max_profiles": max_profiles,
         "representative_count": representative_count,
@@ -460,6 +516,7 @@ def _load_cached_profiles(fingerprint:str) -> Optional[list[InterestProfile]]:
                 representative_titles=[str(title) for title in item.get("representative_titles", [])],
                 member_count=int(item.get("member_count", len(item["member_indices"]))),
                 confidence=float(item.get("confidence", 0.6)),
+                scope=str(item.get("scope", "long_term")),
             )
             for item in payload["profiles"]
         ]
@@ -500,6 +557,7 @@ def _build_interest_profiles(
     representative_count:int,
     cluster_threshold:float,
     max_profile_members:int,
+    scope:str,
 ) -> list[InterestProfile]:
     assignment_order = np.argsort(corpus_weights)[::-1]
     profile_members: list[list[int]] = []
@@ -535,10 +593,12 @@ def _build_interest_profiles(
         representative_indices = members[:max(representative_count, 1)]
         representative_titles = [_corpus_title(corpus[idx]) for idx in representative_indices]
         keywords = _extract_keywords([corpus_texts[idx] for idx in members], corpus_texts)
+        name = _profile_name(representative_titles, keywords)
+        keywords = _prioritize_profile_keywords(name, keywords, representative_titles)
         confidence = _profile_confidence(members, corpus_similarity)
         profiles.append(
             InterestProfile(
-                name=_profile_name(representative_titles, keywords),
+                name=name,
                 member_indices=members,
                 representative_indices=representative_indices,
                 text="\n\n".join(corpus_texts[idx] for idx in representative_indices),
@@ -547,6 +607,7 @@ def _build_interest_profiles(
                 representative_titles=representative_titles,
                 member_count=len(members),
                 confidence=confidence,
+                scope=scope,
             )
         )
     profiles.sort(key=lambda profile: profile.importance, reverse=True)
@@ -569,11 +630,70 @@ def _interest_profile_settings() -> tuple[int, int, float, int]:
     )
 
 
+def _recent_interest_days() -> int:
+    return int(os.environ.get("RECENT_INTEREST_DAYS", "90"))
+
+
+def _recent_interest_weight() -> float:
+    return float(os.environ.get("RECENT_INTEREST_WEIGHT", "0.6"))
+
+
+def _long_term_interest_weight() -> float:
+    return float(os.environ.get("LONG_TERM_INTEREST_WEIGHT", "0.4"))
+
+
+def _display_min_members() -> int:
+    return int(os.environ.get("INTEREST_PROFILE_DISPLAY_MIN_MEMBERS", "2"))
+
+
+def _scoring_min_members() -> int:
+    return int(os.environ.get("INTEREST_PROFILE_SCORING_MIN_MEMBERS", "2"))
+
+
+def _scorable_profiles(profiles:list[InterestProfile]) -> list[InterestProfile]:
+    min_members = max(1, _scoring_min_members())
+    filtered = [profile for profile in profiles if profile.member_count >= min_members]
+    return filtered or profiles[:1]
+
+
+def _recent_corpus(corpus:list[dict], days:int) -> list[dict]:
+    if days <= 0:
+        return []
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    recent = [paper for paper in corpus if _corpus_added_date(paper) >= cutoff]
+    logger.info(f"Found {len(recent)} Zotero papers added in the last {days} days.")
+    return recent
+
+
+def _displayable_profiles(profiles:list[InterestProfile]) -> list[InterestProfile]:
+    min_members = max(1, _display_min_members())
+    filtered = [profile for profile in profiles if profile.member_count >= min_members]
+    return filtered or profiles[:1]
+
+
 def _prepare_interest_profiles(
     corpus:list[dict],
     encoder:SentenceTransformer,
     model:str,
-) -> tuple[list[dict], list[str], list[InterestProfile]]:
+) -> PreparedProfileSet:
+    return _prepare_interest_profile_set(
+        corpus=corpus,
+        encoder=encoder,
+        model=model,
+        scope="long_term",
+        label="Long-term Interest Profiles",
+        weight=_long_term_interest_weight(),
+    )
+
+
+def _prepare_interest_profile_set(
+    corpus:list[dict],
+    encoder:SentenceTransformer,
+    model:str,
+    scope:str,
+    label:str,
+    weight:float,
+) -> PreparedProfileSet:
     max_profiles, representative_count, cluster_threshold, max_profile_members = _interest_profile_settings()
     corpus = sorted(corpus,key=_corpus_added_date,reverse=True)
     corpus_texts = [_corpus_semantic_text(paper) for paper in corpus]
@@ -586,10 +706,11 @@ def _prepare_interest_profiles(
         representative_count,
         cluster_threshold,
         max_profile_members,
+        scope,
     )
     profiles = _load_cached_profiles(fingerprint)
     if profiles is None:
-        logger.info("Building interest profiles from Zotero corpus...")
+        logger.info(f"Building {scope} interest profiles from Zotero corpus...")
         corpus_features = encoder.encode(corpus_texts)
         corpus_similarity = _as_numpy(encoder.similarity(corpus_features, corpus_features))
         profiles = _build_interest_profiles(
@@ -600,14 +721,50 @@ def _prepare_interest_profiles(
             representative_count,
             cluster_threshold,
             max_profile_members,
+            scope,
         )
         _save_cached_profiles(fingerprint, profiles)
-    return corpus, corpus_texts, profiles
+    for profile in profiles:
+        profile.scope = scope
+    return PreparedProfileSet(scope, label, weight, corpus, corpus_texts, profiles)
 
 
-def log_interest_profiles(profiles:list[InterestProfile], limit:int=10) -> None:
-    logger.info("Interest profile summary:")
-    for idx, profile in enumerate(profiles[:limit], start=1):
+def prepare_interest_profile_sets(
+    corpus:list[dict],
+    encoder:SentenceTransformer,
+    model:str,
+) -> list[PreparedProfileSet]:
+    profile_sets = []
+    recent = _recent_corpus(corpus, _recent_interest_days())
+    if recent:
+        profile_sets.append(
+            _prepare_interest_profile_set(
+                corpus=recent,
+                encoder=encoder,
+                model=model,
+                scope="recent",
+                label="Recent Interest Profiles",
+                weight=_recent_interest_weight(),
+            )
+        )
+    else:
+        logger.info("No recent Zotero papers found. Recent interest scoring is skipped.")
+    profile_sets.append(
+        _prepare_interest_profile_set(
+            corpus=corpus,
+            encoder=encoder,
+            model=model,
+            scope="long_term",
+            label="Long-term Interest Profiles",
+            weight=_long_term_interest_weight(),
+        )
+    )
+    return profile_sets
+
+
+def log_interest_profiles(profiles:list[InterestProfile], limit:int=10, title:str="Interest profile summary") -> None:
+    logger.info(title)
+    for idx, profile in enumerate(_displayable_profiles(profiles)[:limit], start=1):
         logger.info(
             f"Profile {idx}: {profile.name} | cohesion={profile.confidence:.0%} "
             f"| zotero_papers={profile.member_count} | keywords={', '.join(profile.keywords[:8])} "
@@ -619,37 +776,43 @@ def build_interest_profiles(corpus:list[dict], model:str='avsolatorio/GIST-small
     if not corpus:
         return []
     encoder = SentenceTransformer(model)
-    _, _, profiles = _prepare_interest_profiles(corpus, encoder, model)
+    profile_sets = prepare_interest_profile_sets(corpus, encoder, model)
+    profiles = []
+    for profile_set in profile_sets:
+        profiles.extend(profile_set.profiles)
     return profiles
 
 
-def rerank_paper(candidate:list[ArxivPaper], corpus:list[dict], model:str='avsolatorio/GIST-small-Embedding-v0') -> list[ArxivPaper]:
-    if not candidate:
-        return candidate
+def build_interest_profile_sets(corpus:list[dict], model:str='avsolatorio/GIST-small-Embedding-v0') -> list[PreparedProfileSet]:
     if not corpus:
-        for paper in candidate:
-            paper.score = 0.0
-        return candidate
-
-    top_profiles_per_candidate = int(os.environ.get("INTEREST_PROFILE_TOP_MATCHES", "2"))
-    profile_weight = float(os.environ.get("INTEREST_PROFILE_SCORE_WEIGHT", "0.75"))
-    representative_weight = float(os.environ.get("INTEREST_REPRESENTATIVE_SCORE_WEIGHT", "0.25"))
-    diversity_penalty = float(os.environ.get("INTEREST_PROFILE_DIVERSITY_PENALTY", "0.35"))
-
+        return []
     encoder = SentenceTransformer(model)
-    corpus, corpus_texts, profiles = _prepare_interest_profiles(corpus, encoder, model)
-    candidate_texts = [_candidate_text(paper) for paper in candidate]
+    return prepare_interest_profile_sets(corpus, encoder, model)
+
+
+def _score_candidate_profile_set(
+    candidate:list[ArxivPaper],
+    candidate_features,
+    encoder:SentenceTransformer,
+    profile_set:PreparedProfileSet,
+    top_profiles_per_candidate:int,
+    profile_weight:float,
+    representative_weight:float,
+) -> list[dict]:
+    profiles = _scorable_profiles(profile_set.profiles)
+    if not profiles:
+        return [{"score": 0.0, "profile": None, "matched_corpus": [], "keywords": []} for _ in candidate]
 
     profile_texts = [profile.text for profile in profiles]
     representative_indices = sorted({idx for profile in profiles for idx in profile.representative_indices})
-    representative_texts = [corpus_texts[idx] for idx in representative_indices]
+    representative_texts = [profile_set.corpus_texts[idx] for idx in representative_indices]
     representative_index_lookup = {corpus_idx: pos for pos, corpus_idx in enumerate(representative_indices)}
 
-    candidate_features = encoder.encode(candidate_texts)
     profile_sim = _as_numpy(encoder.similarity(candidate_features, encoder.encode(profile_texts)))
     representative_sim = _as_numpy(encoder.similarity(candidate_features, encoder.encode(representative_texts)))
 
-    for candidate_idx, paper in enumerate(candidate):
+    results = []
+    for candidate_idx, _ in enumerate(candidate):
         weighted_profile_scores = np.array([
             float(profile_sim[candidate_idx, profile_idx]) * profile.importance
             for profile_idx, profile in enumerate(profiles)
@@ -667,22 +830,92 @@ def rerank_paper(candidate:list[ArxivPaper], corpus:list[dict], model:str='avsol
             representative_scores.append(similarity)
             matched_representatives.append(
                 MatchedCorpusPaper(
-                    title=_corpus_title(corpus[corpus_idx]),
+                    title=_corpus_title(profile_set.corpus[corpus_idx]),
                     similarity=similarity,
-                    paths=_corpus_paths(corpus[corpus_idx]),
-                    added_date=corpus[corpus_idx].get("data", {}).get("dateAdded") or "",
+                    paths=_corpus_paths(profile_set.corpus[corpus_idx]),
+                    added_date=profile_set.corpus[corpus_idx].get("data", {}).get("dateAdded") or "",
                 )
             )
         matched_representatives.sort(key=lambda item: item.similarity, reverse=True)
         representative_score = float(np.mean(sorted(representative_scores, reverse=True)[:3])) if representative_scores else 0.0
+        raw_score = (profile_weight * profile_score + representative_weight * representative_score) * 10
+        results.append(
+            {
+                "score": raw_score,
+                "profile": best_profile,
+                "matched_corpus": matched_representatives,
+                "keywords": best_profile.keywords,
+            }
+        )
+    return results
 
-        paper.score = (profile_weight * profile_score + representative_weight * representative_score) * 10
-        paper.matched_profile = best_profile.name
-        paper.matched_profile_confidence = best_profile.confidence
-        paper.matched_profile_member_count = best_profile.member_count
-        paper.matched_keywords = best_profile.keywords
-        paper.matched_corpus = matched_representatives
-        paper.interest_profiles = profiles[:5]
+
+def rerank_paper(candidate:list[ArxivPaper], corpus:list[dict], model:str='avsolatorio/GIST-small-Embedding-v0') -> list[ArxivPaper]:
+    if not candidate:
+        return candidate
+    if not corpus:
+        for paper in candidate:
+            paper.score = 0.0
+        return candidate
+
+    top_profiles_per_candidate = int(os.environ.get("INTEREST_PROFILE_TOP_MATCHES", "2"))
+    profile_weight = float(os.environ.get("INTEREST_PROFILE_SCORE_WEIGHT", "0.75"))
+    representative_weight = float(os.environ.get("INTEREST_REPRESENTATIVE_SCORE_WEIGHT", "0.25"))
+    diversity_penalty = float(os.environ.get("INTEREST_PROFILE_DIVERSITY_PENALTY", "0.35"))
+
+    encoder = SentenceTransformer(model)
+    profile_sets = prepare_interest_profile_sets(corpus, encoder, model)
+    candidate_texts = [_candidate_text(paper) for paper in candidate]
+    candidate_features = encoder.encode(candidate_texts)
+
+    scored_sets = [
+        (
+            profile_set,
+            _score_candidate_profile_set(
+                candidate,
+                candidate_features,
+                encoder,
+                profile_set,
+                top_profiles_per_candidate,
+                profile_weight,
+                representative_weight,
+            ),
+        )
+        for profile_set in profile_sets
+    ]
+    total_profile_weight = sum(max(profile_set.weight, 0.0) for profile_set, _ in scored_sets) or 1.0
+    recent_profiles = next((profile_set.profiles for profile_set, _ in scored_sets if profile_set.scope == "recent"), [])
+    long_term_profiles = next((profile_set.profiles for profile_set, _ in scored_sets if profile_set.scope == "long_term"), [])
+
+    for candidate_idx, paper in enumerate(candidate):
+        contributions = []
+        weighted_score = 0.0
+        for profile_set, results in scored_sets:
+            result = results[candidate_idx]
+            score = float(result["score"])
+            contribution = max(profile_set.weight, 0.0) * score
+            weighted_score += contribution
+            profile = result["profile"]
+            if profile_set.scope == "recent":
+                paper.recent_matched_profile = profile.name if profile else None
+                paper.recent_matched_score = score
+            elif profile_set.scope == "long_term":
+                paper.long_term_matched_profile = profile.name if profile else None
+                paper.long_term_matched_score = score
+            contributions.append((contribution, profile_set, result))
+
+        paper.score = weighted_score / total_profile_weight
+        _, best_profile_set, best_result = max(contributions, key=lambda item: item[0])
+        best_profile = best_result["profile"]
+        paper.matched_profile = best_profile.name if best_profile else None
+        paper.matched_profile_confidence = best_profile.confidence if best_profile else None
+        paper.matched_profile_member_count = best_profile.member_count if best_profile else 0
+        paper.matched_keywords = best_result["keywords"]
+        paper.matched_corpus = best_result["matched_corpus"]
+        paper.matched_profile_scope = best_profile_set.scope
+        paper.interest_profiles = _displayable_profiles(long_term_profiles)[:5]
+        paper.recent_interest_profiles = _displayable_profiles(recent_profiles)[:5]
+        paper.long_term_interest_profiles = _displayable_profiles(long_term_profiles)[:5]
 
     ranked = sorted(candidate,key=lambda x: x.score,reverse=True)
     profile_counts = {}

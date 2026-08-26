@@ -105,9 +105,7 @@ def get_block_html(title:str, authors:str, rate:str,arxiv_id:str, abstract:str, 
     return block_template.format(title=title, authors=authors,rate=rate,arxiv_id=arxiv_id, abstract=abstract, pdf_url=pdf_url, code=code, affiliations=affiliations, reason=reason or "")
 
 
-def get_profiles_html(profiles:list) -> str:
-    if not profiles:
-        return ""
+def _profile_items_html(profiles:list) -> str:
     items = []
     for profile in profiles[:3]:
         keywords = ", ".join(html.escape(keyword) for keyword in profile.keywords[:5])
@@ -128,23 +126,33 @@ def get_profiles_html(profiles:list) -> str:
             f"{confidence_line}"
             "</li>"
         )
+    return "".join(items)
+
+
+def get_profile_group_html(title:str, profiles:list) -> str:
+    if not profiles:
+        return ""
     return f"""
     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #fffdf5;">
     <tr>
         <td style="font-size: 18px; font-weight: bold; color: #333;">
-            Your Interest Profiles
+            {html.escape(title)}
         </td>
     </tr>
     <tr>
         <td style="font-size: 14px; color: #333; padding-top: 8px;">
             <ul style="margin: 6px 0 0 18px; padding: 0;">
-                {''.join(items)}
+                {_profile_items_html(profiles)}
             </ul>
         </td>
     </tr>
     </table>
     <br>
 """
+
+
+def get_profiles_html(profiles:list) -> str:
+    return get_profile_group_html("Your Interest Profiles", profiles)
 
 
 def get_reason_html(paper:ArxivPaper) -> str:
@@ -161,6 +169,18 @@ def get_reason_html(paper:ArxivPaper) -> str:
             f"<br><strong>Profile cohesion:</strong> {confidence:.0%}"
             f"{f' from {member_count} Zotero papers' if member_count else ''}."
         )
+    recent_profile = getattr(paper, "recent_matched_profile", None)
+    long_term_profile = getattr(paper, "long_term_matched_profile", None)
+    recent_score = getattr(paper, "recent_matched_score", 0.0)
+    long_term_score = getattr(paper, "long_term_matched_score", 0.0)
+    time_scope_line = ""
+    if recent_profile or long_term_profile:
+        parts = []
+        if recent_profile:
+            parts.append(f"Recent: {html.escape(recent_profile)} ({recent_score:.2f})")
+        if long_term_profile:
+            parts.append(f"Long-term: {html.escape(long_term_profile)} ({long_term_score:.2f})")
+        time_scope_line = f"<br><strong>Interest match:</strong> {'; '.join(parts)}"
     matched_items = []
     for matched in paper.matched_corpus[:3]:
         paths = ", ".join(matched.paths[:2]) if matched.paths else "No collection"
@@ -176,6 +196,7 @@ def get_reason_html(paper:ArxivPaper) -> str:
         <td style="font-size: 14px; color: #333; padding: 8px 0;">
             <strong>Why recommended:</strong> This paper is close to your <i>{profile}</i> profile.
             {confidence_line}
+            {time_scope_line}
             {keyword_line}
             {matched_list}
         </td>
@@ -203,8 +224,14 @@ def render_email(papers:list[ArxivPaper]):
     parts = []
     if len(papers) == 0 :
         return framework.replace('__CONTENT__', get_empty_html())
-    profiles = getattr(papers[0], "interest_profiles", [])
-    parts.append(get_profiles_html(profiles))
+    recent_profiles = getattr(papers[0], "recent_interest_profiles", [])
+    long_term_profiles = getattr(papers[0], "long_term_interest_profiles", [])
+    if recent_profiles:
+        parts.append(get_profile_group_html("Your Recent Interest Profiles", recent_profiles))
+    if long_term_profiles:
+        parts.append(get_profile_group_html("Your Long-term Interest Profiles", long_term_profiles))
+    if not recent_profiles and not long_term_profiles:
+        parts.append(get_profiles_html(getattr(papers[0], "interest_profiles", [])))
     
     for p in tqdm(papers,desc='Rendering Email'):
         rate = get_stars(p.score or 0.0)

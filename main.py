@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from pyzotero import zotero
-from recommender import build_interest_profiles, log_interest_profiles, rerank_paper
+from recommender import build_interest_profile_sets, log_interest_profiles, rerank_paper
 from construct_email import render_email, send_email
 from tqdm import trange,tqdm
 from loguru import logger
@@ -210,8 +210,9 @@ if __name__ == '__main__':
         logger.info(f"Remaining {len(corpus)} papers after filtering.")
     if args.profile_debug_only:
         logger.info("PROFILE_DEBUG_ONLY is enabled. Build profiles and skip arXiv retrieval, TLDR generation, and email sending.")
-        profiles = build_interest_profiles(corpus)
-        log_interest_profiles(profiles)
+        profile_sets = build_interest_profile_sets(corpus)
+        for profile_set in profile_sets:
+            log_interest_profiles(profile_set.profiles, title=profile_set.label)
         exit(0)
     logger.info("Retrieving Arxiv papers...")
     papers = get_arxiv_paper(
