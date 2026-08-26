@@ -59,6 +59,11 @@ _PHRASE_KEYWORDS = [
 
 _THEME_RULES = [
     (
+        "Vision-Language Models / Multimodal AI",
+        {"vision-language models", "multimodal", "vlm", "qwen", "vla"},
+        {"video understanding", "generative models", "reasoning", "agent"},
+    ),
+    (
         "Scene Text Recognition / Document OCR",
         {"scene text recognition", "ocr"},
         {"str", "character", "text", "recognition", "token-level"},
@@ -256,9 +261,10 @@ def _profile_name(representative_titles:list[str], keywords:list[str]) -> str:
         return "Scene Text Recognition / Document OCR"
     if re.search(r"pdf|docling|mineru|glm-ocr|document parsing|structured document|layout", evidence_blob):
         return "Document Parsing / PDF Understanding"
-    if re.search(r"\bqwen\b|\bvlm\b|vision[- ]language|multimodal", title_blob):
-        if re.search(r"ocr|visual|multimodal|vision|document", evidence_blob):
+    if re.search(r"\bqwen[a-z0-9-]*\b|\bvla\b|\bvlm\b|vision[- ]language|multimodal", title_blob):
+        if re.search(r"ocr|document|scene text|text recognition", evidence_blob):
             return "VLM-based OCR / Multimodal Document AI"
+        return "Vision-Language Models / Multimodal AI"
     if re.search(r"docling|pdf parsing|document parsing|scene text", title_blob):
         return "Document AI / PDF Parsing / OCR"
     if re.search(r"long[- ]tail|noisy label|label rarity|calibration", title_blob):
