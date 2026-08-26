@@ -6,8 +6,8 @@ zotero:
 email:
   sender: ${oc.env:SENDER}
   receiver: ${oc.env:RECEIVER}
-  smtp_server: smtp.qq.com
-  smtp_port: 465
+  smtp_server: ${oc.env:SMTP_SERVER,smtp.gmail.com}
+  smtp_port: ${oc.env:SMTP_PORT,465}
   sender_password: ${oc.env:SENDER_PASSWORD}
 
 llm:
@@ -19,8 +19,9 @@ llm:
 
 source:
   arxiv:
-    category: ["cs.AI","cs.CV","cs.LG","cs.CL"]
+    category: ["cs.CV","cs.CL"]
 
 executor:
   debug: ${oc.env:DEBUG,null}
+  max_paper_num: 5
   source: ['arxiv']

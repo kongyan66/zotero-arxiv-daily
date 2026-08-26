@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, TypeVar
 from datetime import datetime
 import re
@@ -7,6 +7,14 @@ from openai import OpenAI
 from loguru import logger
 import json
 RawPaperItem = TypeVar('RawPaperItem')
+
+@dataclass
+class MatchedCorpusPaper:
+    title: str
+    similarity: float
+    paths: list[str]
+    added_date: datetime
+
 
 @dataclass
 class Paper:
@@ -20,6 +28,9 @@ class Paper:
     tldr: Optional[str] = None
     affiliations: Optional[list[str]] = None
     score: Optional[float] = None
+    matched_profile: Optional[str] = None
+    matched_keywords: list[str] = field(default_factory=list)
+    matched_corpus: list[MatchedCorpusPaper] = field(default_factory=list)
 
     def _generate_tldr_with_llm(self, openai_client:OpenAI,llm_params:dict) -> str:
         lang = llm_params.get('language', 'English')

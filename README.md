@@ -64,10 +64,17 @@ Below are all the secrets you need to set. They are invisible to anyone includin
 | ZOTERO_ID  | User ID of your Zotero account. **User ID is not your username, but a sequence of numbers**Get your ID from [here](https://www.zotero.org/settings/security). You can find it at the position shown in this [screenshot](https://github.com/TideDra/zotero-arxiv-daily/blob/main/assets/userid.png). | 12345678  |
 | ZOTERO_KEY | An Zotero API key with read access. Get a key from [here](https://www.zotero.org/settings/security).  | AB5tZ877P2j7Sm2Mragq041H   |
 | SENDER | The email account of the SMTP server that sends you email. | abc@qq.com |
-| SENDER_PASSWORD | The password of the sender account. Note that it's not necessarily the password for logging in the e-mail client, but the authentication code for SMTP service. Ask your email provider for this.   | abcdefghijklmn |
+| SENDER_PASSWORD | The password of the sender account. Note that it's not necessarily the password for logging in the e-mail client, but the authentication code for SMTP service. For Gmail, use a Google App Password instead of your normal login password. Ask your email provider for this.   | abcdefghijklmn |
 | RECEIVER | The e-mail address that receives the paper list. | abc@outlook.com |
 | OPENAI_API_KEY | API Key when using the API to access LLMs. You can get FREE API for using advanced open source LLMs in [SiliconFlow](https://cloud.siliconflow.cn/i/b3XhBRAm). | sk-xxx |
 | OPENAI_API_BASE | API URL when using the API to access LLMs. | https://api.siliconflow.cn/v1 |
+
+Optional public variables for SMTP provider selection:
+
+| Key | Description | Example |
+| :--- | :--- | :--- |
+| SMTP_SERVER | SMTP server. Defaults to Gmail if omitted in the sample config below. | smtp.gmail.com |
+| SMTP_PORT | SMTP port. Use 465 for SSL or 587 for STARTTLS. | 465 |
 
 Then you should also set a public variable `CUSTOM_CONFIG` for your custom configuration.
 ![vars](./assets/repo_var.png)
@@ -82,8 +89,8 @@ zotero:
 email:
   sender: ${oc.env:SENDER}
   receiver: ${oc.env:RECEIVER}
-  smtp_server: smtp.qq.com
-  smtp_port: 465
+  smtp_server: ${oc.env:SMTP_SERVER,smtp.gmail.com}
+  smtp_port: ${oc.env:SMTP_PORT,465}
   sender_password: ${oc.env:SENDER_PASSWORD}
 
 llm:
@@ -95,7 +102,7 @@ llm:
 
 source:
   arxiv:
-    category: ["cs.AI","cs.CV","cs.LG","cs.CL"]
+    category: ["cs.CV","cs.CL"]
     include_cross_list: false # Set to true to include arXiv cross-list papers in these categories.
 
 executor:
@@ -129,7 +136,7 @@ email:
   receiver: ??? # The email account that receives the paper list. Example: abc@outlook.com
   smtp_server: ??? # The SMTP server that sends the email. Ask your email provider (Gmail, QQ, Outlook, ...) for its SMTP server. Example: smtp.qq.com
   smtp_port: ??? # The port of SMTP server. Example: 465
-  sender_password: ??? # The password of the sender account. Note that it's not necessarily the password for logging in the e-mail client, but the authentication code for SMTP service. Ask your email provider for this. Example: abcdefghijklmn
+  sender_password: ??? # The password of the sender account. Note that it's not necessarily the password for logging in the e-mail client, but the authentication code for SMTP service. For Gmail, use a Google App Password. Ask your email provider for this. Example: abcdefghijklmn
 
 llm:
   api:
@@ -142,6 +149,17 @@ llm:
   language: English # Preferred language for the TL;DR. Example: English
 
 reranker:
+  profile:
+    enabled: true # Whether to build user interest profiles from Zotero before ranking. Example: true
+    max_profiles: 12 # Maximum number of interest profiles built from Zotero. Example: 12
+    representative_papers: 3 # Number of representative Zotero papers kept for each profile. Example: 3
+    top_profiles_per_candidate: 2 # Number of matching profiles averaged for a candidate paper. Example: 2
+    cluster_threshold: 0.72 # Similarity threshold for assigning Zotero papers to the same profile. Example: 0.72
+    profile_similarity_weight: 0.75 # Ranking weight of candidate-to-profile similarity. Example: 0.75
+    representative_similarity_weight: 0.25 # Ranking weight of candidate-to-representative-paper similarity. Example: 0.25
+    collection_weights: null # Optional glob-pattern weights for Zotero collections. Example: {"2026/current/**": 1.5, "archive/**": 0.5}
+    cache_enabled: true # Whether to reuse interest profiles when the Zotero corpus is unchanged. Example: true
+    cache_path: .cache/zotero_arxiv_daily/interest_profiles.json # Local cache file for interest profiles.
   local:
     model: jinaai/jina-embeddings-v5-text-nano # The Hugging Face model name of the local embedding model. Example: jinaai/jina-embeddings-v5-text-nano
     encode_kwargs:
@@ -157,7 +175,7 @@ reranker:
 executor:
   debug: false # Whether to use debug mode. Example: true
   send_empty: false # Whether to send an empty email even if no new papers today. Example: true
-  max_paper_num: 100 # The maximum number of the papers presented in the email. Example: 100
+  max_paper_num: 5 # The maximum number of the papers presented in the email. Example: 5
   source: ??? # The sources of papers to retrieve. Example: ['arxiv','biorxiv','medrxiv','chemrxiv']
   reranker: local # The reranker to use. Example: 'local' or 'api'
 ```

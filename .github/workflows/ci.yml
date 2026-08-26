@@ -16,9 +16,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
       - name: Setup uv
         uses: astral-sh/setup-uv@v7.1.4
+        with:
+          enable-cache: true
+          cache-python: true
+          prune-cache: false
 
       - name: Run Pytest
+        env:
+          UV_NO_PROGRESS: 1
         run: |
-          uv run pytest -m "" --cov=src/zotero_arxiv_daily --cov-report=term-missing
+          uv sync --frozen --dev
+          uv run --frozen --no-sync pytest -m "" --cov=src/zotero_arxiv_daily --cov-report=term-missing

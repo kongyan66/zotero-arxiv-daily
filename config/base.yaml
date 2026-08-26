@@ -33,6 +33,17 @@ llm:
   language: English # Preferred language for the TL;DR. Example: English
 
 reranker:
+  profile:
+    enabled: true # Whether to build user interest profiles from Zotero before ranking. Example: true
+    max_profiles: 12 # Maximum number of interest profiles built from Zotero. Example: 12
+    representative_papers: 3 # Number of representative Zotero papers kept for each profile. Example: 3
+    top_profiles_per_candidate: 2 # Number of matching profiles averaged for a candidate paper. Example: 2
+    cluster_threshold: 0.72 # Similarity threshold for assigning Zotero papers to the same profile. Example: 0.72
+    profile_similarity_weight: 0.75 # Ranking weight of candidate-to-profile similarity. Example: 0.75
+    representative_similarity_weight: 0.25 # Ranking weight of candidate-to-representative-paper similarity. Example: 0.25
+    collection_weights: null # Optional glob-pattern weights for Zotero collections. Example: {"2026/current/**": 1.5, "archive/**": 0.5}
+    cache_enabled: true # Whether to reuse interest profiles when the Zotero corpus is unchanged. Example: true
+    cache_path: .cache/zotero_arxiv_daily/interest_profiles.json # Local cache file for interest profiles.
   local:
     model: jinaai/jina-embeddings-v5-text-nano-retrieval # The Hugging Face model name of the local embedding model. Example: jinaai/jina-embeddings-v5-text-nano
     encode_kwargs:
@@ -48,6 +59,6 @@ reranker:
 executor:
   debug: false # Whether to use debug mode. Example: true
   send_empty: false # Whether to send an empty email even if no new papers today. Example: true
-  max_paper_num: 100 # The maximum number of the papers presented in the email. Example: 100
+  max_paper_num: 5 # The maximum number of the papers presented in the email. Example: 5
   source: ??? # The sources of papers to retrieve. Example: ['arxiv','biorxiv','medrxiv','chemrxiv']
   reranker: local # The reranker to use. Example: 'local' or 'api'

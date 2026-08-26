@@ -1,6 +1,9 @@
 """Tests for zotero_arxiv_daily.construct_email: render_email, get_stars, get_block_html."""
 
+from datetime import datetime
+
 from zotero_arxiv_daily.construct_email import render_email, get_stars, get_block_html, get_empty_html
+from zotero_arxiv_daily.protocol import MatchedCorpusPaper
 from tests.canned_responses import make_sample_paper
 
 
@@ -76,3 +79,27 @@ def test_get_block_html_contains_all_fields():
 def test_get_empty_html():
     html = get_empty_html()
     assert "No Papers Today" in html
+
+
+def test_render_email_includes_recommendation_explanation():
+    paper = make_sample_paper(
+        score=8.1,
+        tldr="A useful agent paper.",
+        matched_profile="agent / memory / planning",
+        matched_keywords=["agent", "memory", "planning"],
+        matched_corpus=[
+            MatchedCorpusPaper(
+                title="Agent Memory Planning",
+                similarity=0.82,
+                paths=["2026/current/agents"],
+                added_date=datetime(2026, 1, 1),
+            )
+        ],
+    )
+
+    html = render_email([paper])
+
+    assert "Why recommended" in html
+    assert "agent / memory / planning" in html
+    assert "Agent Memory Planning" in html
+    assert "similarity 0.82" in html

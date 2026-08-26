@@ -3,6 +3,7 @@ import re
 import glob
 import math
 import smtplib
+import ssl
 from collections import Counter
 from email.header import Header
 from email.mime.text import MIMEText
@@ -144,7 +145,7 @@ def send_email(config:DictConfig, html:str):
     receiver = config.email.receiver
     password = config.email.sender_password
     smtp_server = config.email.smtp_server
-    smtp_port = config.email.smtp_port
+    smtp_port = int(config.email.smtp_port)
     def _format_addr(s):
         name, addr = parseaddr(s)
         return formataddr((Header(name, 'utf-8').encode(), addr))
@@ -155,17 +156,43 @@ def send_email(config:DictConfig, html:str):
     today = datetime.datetime.now().strftime('%Y/%m/%d')
     msg['Subject'] = Header(f'Daily arXiv {today}', 'utf-8').encode()
 
+    context = ssl.create_default_context()
+    server = None
     try:
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
+        if smtp_port == 465:
+            logger.debug("Using SMTP SSL connection.")
+            server = smtplib.SMTP_SSL(smtp_server, smtp_port, context=context, timeout=60)
+        else:
+            logger.debug("Using SMTP STARTTLS connection.")
+            server = smtplib.SMTP(smtp_server, smtp_port, timeout=60)
+            server.starttls(context=context)
     except Exception as e:
-        logger.debug(f"Failed to use TLS. {e}\nTry to use SSL.")
+        logger.debug(f"Failed to establish preferred SMTP connection. {e}\nTry SSL fallback.")
         try:
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+            server = smtplib.SMTP_SSL(smtp_server, smtp_port, context=context, timeout=60)
         except Exception as e:
-            logger.debug(f"Failed to use SSL. {e}\nTry to use plain text.")
-            server = smtplib.SMTP(smtp_server, smtp_port)
+            logger.debug(f"Failed to use SSL. {e}\nTry plain SMTP fallback.")
+            server = smtplib.SMTP(smtp_server, smtp_port, timeout=60)
 
-    server.login(sender, password)
-    server.sendmail(sender, [receiver], msg.as_string())
-    server.quit()
+    try:
+        server.login(sender, password)
+    except smtplib.SMTPAuthenticationError as e:
+        try:
+            server.quit()
+        except Exception:
+            pass
+        provider_hint = ""
+        if "gmail" in smtp_server.lower():
+            provider_hint = (
+                " Gmail requires a Google App Password when 2-Step Verification is enabled; "
+                "the normal account password will be rejected."
+            )
+        raise RuntimeError(
+            f"SMTP authentication failed for {sender} via {smtp_server}:{smtp_port}.{provider_hint} "
+            "Please update the SENDER and SENDER_PASSWORD GitHub secrets."
+        ) from e
+
+    try:
+        server.sendmail(sender, [receiver], msg.as_string())
+    finally:
+        server.quit()

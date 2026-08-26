@@ -1,4 +1,5 @@
 from .protocol import Paper
+import html
 import math
 
 
@@ -52,7 +53,7 @@ def get_empty_html():
   """
   return block_template
 
-def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None):
+def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None, reason:str=None):
     block_template = """
     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
     <tr>
@@ -77,6 +78,7 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
             <strong>TLDR:</strong> {tldr}
         </td>
     </tr>
+    {reason}
 
     <tr>
         <td style="padding: 8px 0;">
@@ -85,7 +87,34 @@ def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affi
     </tr>
 </table>
 """
-    return block_template.format(title=title, authors=authors,rate=rate, tldr=tldr, pdf_url=pdf_url, affiliations=affiliations)
+    return block_template.format(title=title, authors=authors,rate=rate, tldr=tldr, pdf_url=pdf_url, affiliations=affiliations, reason=reason or "")
+
+
+def get_reason_html(paper:Paper) -> str:
+    if not paper.matched_profile and not paper.matched_corpus:
+        return ""
+    profile = html.escape(paper.matched_profile or "Unknown profile")
+    keywords = ", ".join(html.escape(k) for k in paper.matched_keywords[:6])
+    keyword_line = f"<br><strong>Keywords:</strong> {keywords}" if keywords else ""
+    matched_items = []
+    for matched in paper.matched_corpus[:3]:
+        paths = ", ".join(matched.paths[:2]) if matched.paths else "No collection"
+        matched_items.append(
+            "<li>"
+            f"{html.escape(matched.title)} "
+            f"(similarity {matched.similarity:.2f}; {html.escape(paths)})"
+            "</li>"
+        )
+    matched_list = f"<ul style=\"margin: 6px 0 0 18px; padding: 0;\">{''.join(matched_items)}</ul>" if matched_items else ""
+    return f"""
+    <tr>
+        <td style="font-size: 14px; color: #333; padding: 8px 0;">
+            <strong>Why recommended:</strong> Matches your interest profile <i>{profile}</i>.
+            {keyword_line}
+            {matched_list}
+        </td>
+    </tr>
+"""
 
 def get_stars(score:float):
     full_star = '<span class="full-star">⭐</span>'
@@ -125,7 +154,13 @@ def render_email(papers:list[Paper]) -> str:
                 affiliations += ', ...'
         else:
             affiliations = 'Unknown Affiliation'
-        parts.append(get_block_html(p.title, authors, rate, p.tldr, p.pdf_url, affiliations))
+        title = html.escape(p.title)
+        authors = html.escape(authors)
+        tldr = html.escape(p.tldr or "")
+        pdf_url = html.escape(p.pdf_url or p.url, quote=True)
+        affiliations = html.escape(affiliations)
+        reason = get_reason_html(p)
+        parts.append(get_block_html(title, authors, rate, tldr, pdf_url, affiliations, reason))
 
     content = '<br>' + '</br><br>'.join(parts) + '</br>'
     return framework.replace('__CONTENT__', content)

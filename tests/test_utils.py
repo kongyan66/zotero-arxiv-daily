@@ -186,6 +186,24 @@ def test_send_email_falls_back_to_plain(config, monkeypatch):
     assert len(sent) == 1
 
 
+def test_send_email_gmail_auth_error_has_actionable_message(config, monkeypatch):
+    config.email.smtp_server = "smtp.gmail.com"
+    config.email.smtp_port = 465
+
+    class StubSMTPAuthFails:
+        def __init__(self, *a, **kw):
+            pass
+        def login(self, u, p):
+            raise smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(smtplib, "SMTP_SSL", StubSMTPAuthFails)
+
+    with pytest.raises(RuntimeError, match="Google App Password"):
+        send_email(config, "<html>auth fail</html>")
+
+
 # ---------------------------------------------------------------------------
 # extract_tex_code_from_tar
 # ---------------------------------------------------------------------------

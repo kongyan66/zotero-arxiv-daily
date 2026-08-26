@@ -44,7 +44,7 @@ environment:
 
       # 可选参数（带默认值）
       - ZOTERO_IGNORE=already_read_papers
-      - ARXIV_QUERY=cs.AI+cs.CV+cs.LG+cs.CL
+      - ARXIV_QUERY=cs.CV+cs.CL
       - SEND_EMPTY=False
       - MAX_PAPER_NUM=5
       - USE_LLM_API=1
