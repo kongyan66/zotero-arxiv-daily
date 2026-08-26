@@ -1,6 +1,9 @@
 name: Test workflow
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/run-profile-refine-test
 
 jobs:
   calculate-and-send:
