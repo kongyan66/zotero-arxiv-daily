@@ -20,6 +20,8 @@ class ArxivPaper:
         self._paper = paper
         self.score = None
         self.matched_profile = None
+        self.matched_profile_confidence = None
+        self.matched_profile_member_count = 0
         self.matched_keywords = []
         self.matched_corpus = []
         self.interest_profiles = []

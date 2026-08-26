@@ -112,11 +112,20 @@ def get_profiles_html(profiles:list) -> str:
     for profile in profiles[:3]:
         keywords = ", ".join(html.escape(keyword) for keyword in profile.keywords[:5])
         representatives = "; ".join(html.escape(title) for title in profile.representative_titles[:2])
+        confidence = getattr(profile, "confidence", None)
+        member_count = getattr(profile, "member_count", len(getattr(profile, "member_indices", [])))
+        confidence_line = ""
+        if confidence is not None:
+            confidence_line = (
+                f"<br><span style=\"color: #777;\">Confidence: {confidence:.0%}; "
+                f"Zotero papers: {member_count}</span>"
+            )
         items.append(
             "<li style=\"margin-bottom: 8px;\">"
             f"<strong>{html.escape(profile.name)}</strong>"
             f"<br><span style=\"color: #666;\">Keywords: {keywords}</span>"
             f"<br><span style=\"color: #666;\">Representative Zotero papers: {representatives}</span>"
+            f"{confidence_line}"
             "</li>"
         )
     return f"""
@@ -144,6 +153,14 @@ def get_reason_html(paper:ArxivPaper) -> str:
     profile = html.escape(paper.matched_profile or "Unknown profile")
     keywords = ", ".join(html.escape(keyword) for keyword in paper.matched_keywords[:6])
     keyword_line = f"<br><strong>Keywords:</strong> {keywords}" if keywords else ""
+    confidence = getattr(paper, "matched_profile_confidence", None)
+    member_count = getattr(paper, "matched_profile_member_count", 0)
+    confidence_line = ""
+    if confidence is not None:
+        confidence_line = (
+            f"<br><strong>Profile strength:</strong> {confidence:.0%} confidence"
+            f"{f' from {member_count} Zotero papers' if member_count else ''}."
+        )
     matched_items = []
     for matched in paper.matched_corpus[:3]:
         paths = ", ".join(matched.paths[:2]) if matched.paths else "No collection"
@@ -157,7 +174,8 @@ def get_reason_html(paper:ArxivPaper) -> str:
     return f"""
     <tr>
         <td style="font-size: 14px; color: #333; padding: 8px 0;">
-            <strong>Why recommended:</strong> Matches your interest profile <i>{profile}</i>.
+            <strong>Why recommended:</strong> This paper is close to your <i>{profile}</i> profile.
+            {confidence_line}
             {keyword_line}
             {matched_list}
         </td>
