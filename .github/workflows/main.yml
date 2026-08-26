@@ -36,6 +36,15 @@ jobs:
           restore-keys: |
             embedding-models-${{ runner.os }}-
 
+      - name: Cache interest profiles
+        uses: actions/cache@v4
+        with:
+          path: .cache/zotero_arxiv_daily
+          key: interest-profiles-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}-${{ github.run_id }}
+          restore-keys: |
+            interest-profiles-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}-
+            interest-profiles-${{ runner.os }}-
+
       - name: Run script
         env:
           ZOTERO_ID: ${{ secrets.ZOTERO_ID }}
@@ -57,6 +66,10 @@ jobs:
           OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
           MODEL_NAME: ${{ vars.MODEL_NAME || secrets.MODEL_NAME }}
           LANGUAGE: ${{ vars.LANGUAGE }}
+          INTEREST_PROFILE_CACHE: ${{ vars.INTEREST_PROFILE_CACHE || '1' }}
+          INTEREST_PROFILE_MAX: ${{ vars.INTEREST_PROFILE_MAX || '10' }}
+          INTEREST_PROFILE_REPRESENTATIVES: ${{ vars.INTEREST_PROFILE_REPRESENTATIVES || '3' }}
+          INTEREST_PROFILE_CLUSTER_THRESHOLD: ${{ vars.INTEREST_PROFILE_CLUSTER_THRESHOLD || '0.72' }}
           UV_NO_PROGRESS: 1
         run: |
           uv sync --no-dev

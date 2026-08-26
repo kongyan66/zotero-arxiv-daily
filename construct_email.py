@@ -1,4 +1,5 @@
 from paper import ArxivPaper
+import html
 import math
 from tqdm import tqdm
 from email.header import Header
@@ -60,7 +61,7 @@ def get_empty_html():
   """
   return block_template
 
-def get_block_html(title:str, authors:str, rate:str,arxiv_id:str, abstract:str, pdf_url:str, code_url:str=None, affiliations:str=None):
+def get_block_html(title:str, authors:str, rate:str,arxiv_id:str, abstract:str, pdf_url:str, code_url:str=None, affiliations:str=None, reason:str=None):
     code = f'<a href="{code_url}" style="display: inline-block; text-decoration: none; font-size: 14px; font-weight: bold; color: #fff; background-color: #5bc0de; padding: 8px 16px; border-radius: 4px; margin-left: 8px;">Code</a>' if code_url else ''
     block_template = """
     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
@@ -91,6 +92,7 @@ def get_block_html(title:str, authors:str, rate:str,arxiv_id:str, abstract:str, 
             <strong>TLDR:</strong> {abstract}
         </td>
     </tr>
+    {reason}
 
     <tr>
         <td style="padding: 8px 0;">
@@ -100,7 +102,67 @@ def get_block_html(title:str, authors:str, rate:str,arxiv_id:str, abstract:str, 
     </tr>
 </table>
 """
-    return block_template.format(title=title, authors=authors,rate=rate,arxiv_id=arxiv_id, abstract=abstract, pdf_url=pdf_url, code=code, affiliations=affiliations)
+    return block_template.format(title=title, authors=authors,rate=rate,arxiv_id=arxiv_id, abstract=abstract, pdf_url=pdf_url, code=code, affiliations=affiliations, reason=reason or "")
+
+
+def get_profiles_html(profiles:list) -> str:
+    if not profiles:
+        return ""
+    items = []
+    for profile in profiles[:3]:
+        keywords = ", ".join(html.escape(keyword) for keyword in profile.keywords[:5])
+        representatives = "; ".join(html.escape(title) for title in profile.representative_titles[:2])
+        items.append(
+            "<li style=\"margin-bottom: 8px;\">"
+            f"<strong>{html.escape(profile.name)}</strong>"
+            f"<br><span style=\"color: #666;\">Keywords: {keywords}</span>"
+            f"<br><span style=\"color: #666;\">Representative Zotero papers: {representatives}</span>"
+            "</li>"
+        )
+    return f"""
+    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #fffdf5;">
+    <tr>
+        <td style="font-size: 18px; font-weight: bold; color: #333;">
+            Your Interest Profiles
+        </td>
+    </tr>
+    <tr>
+        <td style="font-size: 14px; color: #333; padding-top: 8px;">
+            <ul style="margin: 6px 0 0 18px; padding: 0;">
+                {''.join(items)}
+            </ul>
+        </td>
+    </tr>
+    </table>
+    <br>
+"""
+
+
+def get_reason_html(paper:ArxivPaper) -> str:
+    if not paper.matched_profile and not paper.matched_corpus:
+        return ""
+    profile = html.escape(paper.matched_profile or "Unknown profile")
+    keywords = ", ".join(html.escape(keyword) for keyword in paper.matched_keywords[:6])
+    keyword_line = f"<br><strong>Keywords:</strong> {keywords}" if keywords else ""
+    matched_items = []
+    for matched in paper.matched_corpus[:3]:
+        paths = ", ".join(matched.paths[:2]) if matched.paths else "No collection"
+        matched_items.append(
+            "<li>"
+            f"{html.escape(matched.title)} "
+            f"(similarity {matched.similarity:.2f}; {html.escape(paths)})"
+            "</li>"
+        )
+    matched_list = f"<ul style=\"margin: 6px 0 0 18px; padding: 0;\">{''.join(matched_items)}</ul>" if matched_items else ""
+    return f"""
+    <tr>
+        <td style="font-size: 14px; color: #333; padding: 8px 0;">
+            <strong>Why recommended:</strong> Matches your interest profile <i>{profile}</i>.
+            {keyword_line}
+            {matched_list}
+        </td>
+    </tr>
+"""
 
 def get_stars(score:float):
     full_star = '<span class="full-star">⭐</span>'
@@ -123,9 +185,11 @@ def render_email(papers:list[ArxivPaper]):
     parts = []
     if len(papers) == 0 :
         return framework.replace('__CONTENT__', get_empty_html())
+    profiles = getattr(papers[0], "interest_profiles", [])
+    parts.append(get_profiles_html(profiles))
     
     for p in tqdm(papers,desc='Rendering Email'):
-        rate = get_stars(p.score)
+        rate = get_stars(p.score or 0.0)
         author_list = [a.name for a in p.authors]
         num_authors = len(author_list)
         
@@ -140,7 +204,19 @@ def render_email(papers:list[ArxivPaper]):
                 affiliations += ', ...'
         else:
             affiliations = 'Unknown Affiliation'
-        parts.append(get_block_html(p.title, authors,rate,p.arxiv_id ,p.tldr, p.pdf_url, p.code_url, affiliations))
+        parts.append(
+            get_block_html(
+                html.escape(p.title),
+                html.escape(authors),
+                rate,
+                html.escape(p.arxiv_id),
+                html.escape(p.tldr),
+                html.escape(p.pdf_url, quote=True),
+                html.escape(p.code_url, quote=True) if p.code_url else None,
+                html.escape(affiliations),
+                get_reason_html(p),
+            )
+        )
         time.sleep(10)
 
     content = '<br>' + '</br><br>'.join(parts) + '</br>'
