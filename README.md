@@ -83,6 +83,7 @@ There are also some public variables (Repository Variables) you can set, which a
 | REPOSITORY | | str | The repository that provides the workflow. If set, the value can only be `TideDra/zotero-arxiv-daily`, in which case, the workflow always pulls the latest code from this upstream repo, so that you don't need to sync your forked repo upon each update, unless the workflow file is changed. | `TideDra/zotero-arxiv-daily` |
 | REF | | str | The specified ref of the workflow to run. Only valid when REPOSITORY is set to `TideDra/zotero-arxiv-daily`. Currently supported values include `main` for stable version, `dev` for development version which has new features and potential bugs. | `main` |
 | LANGUAGE | | str | The language of TLDR; Its value is directly embeded in the prompt passed to LLM | Chinese |
+| PROFILE_DEBUG_ONLY | | bool | Only build and print Zotero interest profiles, then skip arXiv retrieval, TLDR generation, and email sending. Useful for quickly tuning profile quality. | 0 |
 | ARXIV_BATCH_SIZE | | int | Number of arXiv IDs to fetch per API request. Keep this small to avoid HTTP 429 throttling. | 5 |
 | ARXIV_RETRY_ATTEMPTS | | int | Retry attempts for throttled arXiv API requests. | 4 |
 | ARXIV_RETRY_DELAY_SECONDS | | int | Initial retry delay for arXiv API requests. The workflow uses exponential backoff. | 45 |

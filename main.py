@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from pyzotero import zotero
-from recommender import rerank_paper
+from recommender import build_interest_profiles, log_interest_profiles, rerank_paper
 from construct_email import render_email, send_email
 from tqdm import trange,tqdm
 from loguru import logger
@@ -147,6 +147,7 @@ if __name__ == '__main__':
     add_argument('--zotero_key', type=str, help='Zotero API key')
     add_argument('--zotero_ignore',type=str,help='Zotero collection to ignore, using gitignore-style pattern.')
     add_argument('--send_empty', type=bool, help='If get no arxiv paper, send empty email',default=False)
+    add_argument('--profile_debug_only', type=bool, help='Only build and print Zotero interest profiles, then exit.', default=False)
     add_argument('--max_paper_num', type=int, help='Maximum number of papers to recommend',default=5)
     add_argument('--arxiv_query', type=str, help='Arxiv RSS query, e.g. cs.CV+cs.CL', default="cs.CV+cs.CL")
     add_argument('--arxiv_batch_size', type=int, help='Number of arXiv IDs to fetch per API request', default=5)
@@ -207,6 +208,11 @@ if __name__ == '__main__':
         logger.info(f"Ignoring papers in:\n {args.zotero_ignore}...")
         corpus = filter_corpus(corpus, args.zotero_ignore)
         logger.info(f"Remaining {len(corpus)} papers after filtering.")
+    if args.profile_debug_only:
+        logger.info("PROFILE_DEBUG_ONLY is enabled. Build profiles and skip arXiv retrieval, TLDR generation, and email sending.")
+        profiles = build_interest_profiles(corpus)
+        log_interest_profiles(profiles)
+        exit(0)
     logger.info("Retrieving Arxiv papers...")
     papers = get_arxiv_paper(
         args.arxiv_query,

@@ -51,6 +51,7 @@ jobs:
           ZOTERO_KEY: ${{ secrets.ZOTERO_KEY }}
           ZOTERO_IGNORE: ${{ vars.ZOTERO_IGNORE }}
           SEND_EMPTY: ${{ vars.SEND_EMPTY }}
+          PROFILE_DEBUG_ONLY: ${{ vars.PROFILE_DEBUG_ONLY || '0' }}
           ARXIV_QUERY: ${{ vars.ARXIV_QUERY || secrets.ARXIV_QUERY || 'cs.CV+cs.CL' }}
           ARXIV_BATCH_SIZE: ${{ vars.ARXIV_BATCH_SIZE || secrets.ARXIV_BATCH_SIZE || '5' }}
           ARXIV_RETRY_ATTEMPTS: ${{ vars.ARXIV_RETRY_ATTEMPTS || secrets.ARXIV_RETRY_ATTEMPTS || '4' }}

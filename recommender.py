@@ -20,11 +20,22 @@ _STOPWORDS = {
     "into", "its", "model", "models", "more", "new", "not", "our", "paper",
     "present", "propose", "results", "show", "study", "than", "that", "the",
     "their", "this", "through", "title", "abstract", "using", "was", "we", "with",
-    "across", "approach", "benchmark", "benchmarks", "categories", "collection",
-    "collections", "comparative", "dataset", "datasets", "diverse", "evaluation",
-    "experiments", "framework", "method", "methods", "novel", "performance",
-    "report", "task", "tasks", "technical", "training", "understanding",
-    "unlimited", "via", "work", "works",
+    "across", "addressing", "approach", "benchmark", "benchmarks", "categories",
+    "collection", "collections", "comparative", "dataset", "datasets", "diverse",
+    "evaluation", "experiments", "framework", "method", "methods", "novel",
+    "performance", "problem", "problems", "report", "task", "tasks", "technical",
+    "training", "understanding", "unlimited", "via", "work", "works",
+}
+
+_WEAK_KEYWORDS = {
+    "LLM",
+    "vision-language models",
+    "multimodal",
+    "visual recognition",
+    "object detection",
+    "segmentation",
+    "generative models",
+    "video understanding",
 }
 
 _PHRASE_KEYWORDS = [
@@ -47,6 +58,21 @@ _PHRASE_KEYWORDS = [
 ]
 
 _THEME_RULES = [
+    (
+        "Scene Text Recognition / Document OCR",
+        {"scene text recognition", "ocr"},
+        {"str", "character", "text", "recognition", "token-level"},
+    ),
+    (
+        "Document Parsing / PDF Understanding",
+        {"document parsing", "pdf", "docling"},
+        {"layout", "structured", "extraction", "mineru", "glm-ocr"},
+    ),
+    (
+        "VLM-based OCR / Multimodal Document AI",
+        {"vision-language models", "multimodal", "ocr"},
+        {"document", "qwen", "vlm", "visual"},
+    ),
     (
         "Document AI / PDF Parsing / OCR",
         {"document parsing", "pdf", "docling", "scene text recognition"},
@@ -193,7 +219,8 @@ def _extract_keywords(texts:list[str], background_texts:Optional[list[str]]=None
         if profile_coverage < 0.06:
             continue
         idf = np.log((background_size + 1) / (background_phrase_df[label] + 1)) + 1
-        phrase_scores.append((label, profile_coverage * float(idf)))
+        weak_penalty = 0.55 if label in _WEAK_KEYWORDS else 1.0
+        phrase_scores.append((label, profile_coverage * float(idf) * weak_penalty))
     phrase_keywords = [label for label, _ in sorted(phrase_scores, key=lambda item: item[1], reverse=True)[:4]]
 
     tokens = []
@@ -208,7 +235,8 @@ def _extract_keywords(texts:list[str], background_texts:Optional[list[str]]=None
     token_scores = []
     for token, count in token_counts.items():
         idf = np.log((background_size + 1) / (background_df[token] + 1)) + 1
-        token_scores.append((token, count * float(idf)))
+        weak_penalty = 0.6 if token in {"visual", "transformer", "metric", "detection", "segmentation"} else 1.0
+        token_scores.append((token, count * float(idf) * weak_penalty))
     for token, _ in sorted(token_scores, key=lambda item: item[1], reverse=True):
         normalized = token.replace("-", "")
         token_parts = re.findall(r"[a-z0-9]+", token)
@@ -223,9 +251,14 @@ def _extract_keywords(texts:list[str], background_texts:Optional[list[str]]=None
 def _profile_name(representative_titles:list[str], keywords:list[str]) -> str:
     title_blob = " ".join(representative_titles).lower()
     keyword_blob = " ".join(keywords).lower()
+    evidence_blob = keyword_blob + " " + title_blob
+    if re.search(r"scene text|str\b|character|text image|text detection", evidence_blob):
+        return "Scene Text Recognition / Document OCR"
+    if re.search(r"pdf|docling|mineru|glm-ocr|document parsing|structured document|layout", evidence_blob):
+        return "Document Parsing / PDF Understanding"
     if re.search(r"\bqwen\b|\bvlm\b|vision[- ]language|multimodal", title_blob):
-        if re.search(r"ocr|visual|multimodal|vision", keyword_blob + " " + title_blob):
-            return "Vision-Language Models / Multimodal OCR"
+        if re.search(r"ocr|visual|multimodal|vision|document", evidence_blob):
+            return "VLM-based OCR / Multimodal Document AI"
     if re.search(r"docling|pdf parsing|document parsing|scene text", title_blob):
         return "Document AI / PDF Parsing / OCR"
     if re.search(r"long[- ]tail|noisy label|label rarity|calibration", title_blob):
@@ -521,27 +554,23 @@ def _build_interest_profiles(
     return profiles
 
 
-def rerank_paper(candidate:list[ArxivPaper], corpus:list[dict], model:str='avsolatorio/GIST-small-Embedding-v0') -> list[ArxivPaper]:
-    if not candidate:
-        return candidate
-    if not corpus:
-        for paper in candidate:
-            paper.score = 0.0
-        return candidate
+def _interest_profile_settings() -> tuple[int, int, float, int]:
+    return (
+        int(os.environ.get("INTEREST_PROFILE_MAX", "10")),
+        int(os.environ.get("INTEREST_PROFILE_REPRESENTATIVES", "3")),
+        float(os.environ.get("INTEREST_PROFILE_CLUSTER_THRESHOLD", "0.72")),
+        int(os.environ.get("INTEREST_PROFILE_MAX_MEMBERS", "45")),
+    )
 
-    max_profiles = int(os.environ.get("INTEREST_PROFILE_MAX", "10"))
-    representative_count = int(os.environ.get("INTEREST_PROFILE_REPRESENTATIVES", "3"))
-    cluster_threshold = float(os.environ.get("INTEREST_PROFILE_CLUSTER_THRESHOLD", "0.72"))
-    max_profile_members = int(os.environ.get("INTEREST_PROFILE_MAX_MEMBERS", "45"))
-    top_profiles_per_candidate = int(os.environ.get("INTEREST_PROFILE_TOP_MATCHES", "2"))
-    profile_weight = float(os.environ.get("INTEREST_PROFILE_SCORE_WEIGHT", "0.75"))
-    representative_weight = float(os.environ.get("INTEREST_REPRESENTATIVE_SCORE_WEIGHT", "0.25"))
-    diversity_penalty = float(os.environ.get("INTEREST_PROFILE_DIVERSITY_PENALTY", "0.35"))
 
-    encoder = SentenceTransformer(model)
+def _prepare_interest_profiles(
+    corpus:list[dict],
+    encoder:SentenceTransformer,
+    model:str,
+) -> tuple[list[dict], list[str], list[InterestProfile]]:
+    max_profiles, representative_count, cluster_threshold, max_profile_members = _interest_profile_settings()
     corpus = sorted(corpus,key=_corpus_added_date,reverse=True)
     corpus_texts = [_corpus_semantic_text(paper) for paper in corpus]
-    candidate_texts = [_candidate_text(paper) for paper in candidate]
     corpus_weights = _corpus_weights(corpus)
 
     fingerprint = _corpus_fingerprint(
@@ -567,6 +596,43 @@ def rerank_paper(candidate:list[ArxivPaper], corpus:list[dict], model:str='avsol
             max_profile_members,
         )
         _save_cached_profiles(fingerprint, profiles)
+    return corpus, corpus_texts, profiles
+
+
+def log_interest_profiles(profiles:list[InterestProfile], limit:int=10) -> None:
+    logger.info("Interest profile summary:")
+    for idx, profile in enumerate(profiles[:limit], start=1):
+        logger.info(
+            f"Profile {idx}: {profile.name} | cohesion={profile.confidence:.0%} "
+            f"| zotero_papers={profile.member_count} | keywords={', '.join(profile.keywords[:8])} "
+            f"| representatives={'; '.join(profile.representative_titles[:3])}"
+        )
+
+
+def build_interest_profiles(corpus:list[dict], model:str='avsolatorio/GIST-small-Embedding-v0') -> list[InterestProfile]:
+    if not corpus:
+        return []
+    encoder = SentenceTransformer(model)
+    _, _, profiles = _prepare_interest_profiles(corpus, encoder, model)
+    return profiles
+
+
+def rerank_paper(candidate:list[ArxivPaper], corpus:list[dict], model:str='avsolatorio/GIST-small-Embedding-v0') -> list[ArxivPaper]:
+    if not candidate:
+        return candidate
+    if not corpus:
+        for paper in candidate:
+            paper.score = 0.0
+        return candidate
+
+    top_profiles_per_candidate = int(os.environ.get("INTEREST_PROFILE_TOP_MATCHES", "2"))
+    profile_weight = float(os.environ.get("INTEREST_PROFILE_SCORE_WEIGHT", "0.75"))
+    representative_weight = float(os.environ.get("INTEREST_REPRESENTATIVE_SCORE_WEIGHT", "0.25"))
+    diversity_penalty = float(os.environ.get("INTEREST_PROFILE_DIVERSITY_PENALTY", "0.35"))
+
+    encoder = SentenceTransformer(model)
+    corpus, corpus_texts, profiles = _prepare_interest_profiles(corpus, encoder, model)
+    candidate_texts = [_candidate_text(paper) for paper in candidate]
 
     profile_texts = [profile.text for profile in profiles]
     representative_indices = sorted({idx for profile in profiles for idx in profile.representative_indices})
